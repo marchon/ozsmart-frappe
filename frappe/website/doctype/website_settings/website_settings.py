@@ -14,7 +14,7 @@ class WebsiteSettings(Document):
 	def validate(self):
 		self.validate_top_bar_items()
 		self.validate_footer_items()
-		self.validate_home_page()
+#		self.validate_home_page()
 
 	def validate_home_page(self):
 		if frappe.flags.in_install:
