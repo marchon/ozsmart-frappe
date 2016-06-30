@@ -185,11 +185,13 @@ class BaseDocument(object):
 
 			df = self.meta.get_field(fieldname)
 			if df:
-				if df.fieldtype in ("Check", "Int") and not isinstance(d[fieldname], int):
+				if df.fieldtype=="Check" and (not isinstance(d[fieldname], int) or d[fieldname] > 1):
+					d[fieldname] = 1 if cint(d[fieldname]) else 0
+
+				elif df.fieldtype=="Int" and not isinstance(d[fieldname], int):
 					d[fieldname] = cint(d[fieldname])
 
 				elif df.fieldtype in ("Currency", "Float", "Percent") and not isinstance(d[fieldname], float):
-
 					d[fieldname] = flt(d[fieldname])
 
 				elif df.fieldtype in ("Datetime", "Date") and d[fieldname]=="":
@@ -198,6 +200,9 @@ class BaseDocument(object):
 				elif df.get("unique") and cstr(d[fieldname]).strip()=="":
 					# unique empty field should be set to None
 					d[fieldname] = None
+
+				if isinstance(d[fieldname], list) and df.fieldtype != 'Table':
+					frappe.throw(_('Value for {0} cannot be a list').format(_(df.label)))
 
 		return d
 
@@ -304,13 +309,19 @@ class BaseDocument(object):
 			return
 
 		d = self.get_valid_dict()
+
+		# don't update name, as case might've been changed
+		name = d['name']
+		del d['name']
+
 		columns = d.keys()
+
 		try:
 			frappe.db.sql("""update `tab{doctype}`
 				set {values} where name=%s""".format(
 					doctype = self.doctype,
 					values = ", ".join(["`"+c+"`=%s" for c in columns])
-				), d.values() + [d.get("name")])
+				), d.values() + [name])
 		except Exception, e:
 			if e.args[0]==1062 and "Duplicate" in cstr(e.args[1]):
 				self.show_unique_validation_message(e)
@@ -395,10 +406,8 @@ class BaseDocument(object):
 
 		invalid_links = []
 		cancelled_links = []
-		for df in self.meta.get_link_fields() + self.meta.get("fields",
-			{"fieldtype":"Dynamic Link"}):
-
-
+		for df in (self.meta.get_link_fields()
+				 + self.meta.get("fields", {"fieldtype":"Dynamic Link"})):
 			docname = self.get(df.fieldname)
 			if docname:
 				if df.fieldtype=="Link":
@@ -412,6 +421,9 @@ class BaseDocument(object):
 
 				# MySQL is case insensitive. Preserve case of the original docname in the Link Field.
 				value = frappe.db.get_value(doctype, docname, "name", cache=True)
+				if frappe.get_meta(doctype).issingle:
+					value = doctype
+
 				setattr(self, df.fieldname, value)
 
 				if not value:

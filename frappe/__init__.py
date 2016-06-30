@@ -11,10 +11,10 @@ from functools import wraps
 import os, importlib, inspect, logging, json
 
 # public
-from frappe.__version__ import __version__
 from .exceptions import *
 from .utils.jinja import get_jenv, get_template, render_template
 
+__version__ = "6.27.22"
 
 local = Local()
 
@@ -49,11 +49,8 @@ def _(msg, lang=None):
 	# msg should always be unicode
 	msg = cstr(msg)
 
-	if lang == "en":
-		return msg
-		
 	return get_full_dict(local.lang).get(msg) or msg
-	
+
 def get_lang_dict(fortype, name=None):
 	"""Returns the translated language dict for the given type and name.
 
@@ -130,7 +127,7 @@ def init(site, sites_path=None, new_site=False):
 	local.system_settings = None
 
 	local.user = None
-	local.user_obj = None
+	local.user_perms = None
 	local.session = None
 	local.role_permissions = {}
 	local.valid_columns = {}
@@ -193,7 +190,9 @@ def cache():
 	global redis_server
 	if not redis_server:
 		from frappe.utils.redis_wrapper import RedisWrapper
-		redis_server = RedisWrapper.from_url(conf.get("cache_redis_server") or "redis://localhost:11311")
+		redis_server = RedisWrapper.from_url(conf.get('redis_cache')
+			or conf.get("cache_redis_server")
+			or "redis://localhost:11311")
 	return redis_server
 
 def get_traceback():
@@ -288,13 +287,13 @@ def set_user(username):
 	local.session.data = _dict()
 	local.role_permissions = {}
 	local.new_doc_templates = {}
-	local.user_obj = None
+	local.user_perms = None
 
 def get_user():
-	from frappe.utils.user import User
-	if not local.user_obj:
-		local.user_obj = User(local.session.user)
-	return local.user_obj
+	from frappe.utils.user import UserPermissions
+	if not local.user_perms:
+		local.user_perms = UserPermissions(local.session.user)
+	return local.user_perms
 
 def get_roles(username=None):
 	"""Returns roles of current user."""
@@ -319,7 +318,7 @@ def sendmail(recipients=(), sender="", subject="No Subject", message="No Message
 		unsubscribe_method=None, unsubscribe_params=None, unsubscribe_message=None,
 		attachments=None, content=None, doctype=None, name=None, reply_to=None,
 		cc=(), show_as_cc=(), message_id=None, in_reply_to=None, as_bulk=False, send_after=None, expose_recipients=False,
-		bulk_priority=1):
+		bulk_priority=1, communication=None):
 	"""Send email using user's default **Email Account** or global default **Email Account**.
 
 
@@ -340,6 +339,7 @@ def sendmail(recipients=(), sender="", subject="No Subject", message="No Message
 	:param in_reply_to: Used to send the Message-Id of a received email back as In-Reply-To.
 	:param send_after: Send after the given datetime.
 	:param expose_recipients: Display all recipients in the footer message - "This email was sent to"
+	:param communication: Communication link to be set in Bulk Email record
 	"""
 
 	if bulk or as_bulk:
@@ -349,7 +349,7 @@ def sendmail(recipients=(), sender="", subject="No Subject", message="No Message
 			reference_doctype = doctype or reference_doctype, reference_name = name or reference_name,
 			unsubscribe_method=unsubscribe_method, unsubscribe_params=unsubscribe_params, unsubscribe_message=unsubscribe_message,
 			attachments=attachments, reply_to=reply_to, cc=cc, show_as_cc=show_as_cc, message_id=message_id, in_reply_to=in_reply_to,
-			send_after=send_after, expose_recipients=expose_recipients, bulk_priority=bulk_priority)
+			send_after=send_after, expose_recipients=expose_recipients, bulk_priority=bulk_priority, communication=communication)
 	else:
 		import frappe.email
 		if as_markdown:
@@ -839,6 +839,9 @@ def copy_doc(doc, ignore_no_copy=True):
 
 	fields_to_clear = ['name', 'owner', 'creation', 'modified', 'modified_by']
 
+	if not local.flags.in_test:
+		fields_to_clear.append("docstatus")
+
 	if not isinstance(doc, dict):
 		d = doc.as_dict()
 	else:
@@ -882,7 +885,7 @@ def compare(val1, condition, val2):
 	import frappe.utils
 	return frappe.utils.compare(val1, condition, val2)
 
-def respond_as_web_page(title, html, success=None, http_status_code=None):
+def respond_as_web_page(title, html, success=None, http_status_code=None, context=None):
 	"""Send response as a web page with a message rather than JSON. Used to show permission errors etc.
 
 	:param title: Page title and heading.
@@ -896,6 +899,9 @@ def respond_as_web_page(title, html, success=None, http_status_code=None):
 	local.response['page_name'] = 'message'
 	if http_status_code:
 		local.response['http_status_code'] = http_status_code
+
+	if context:
+		local.response['context'] = context
 
 def build_match_conditions(doctype, as_condition=True):
 	"""Return match (User permissions) for given doctype as list or SQL."""

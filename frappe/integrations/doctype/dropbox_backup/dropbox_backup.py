@@ -14,9 +14,9 @@
 from __future__ import unicode_literals
 import frappe
 from frappe.model.document import Document
-from frappe.utils import cint, split_emails, get_request_site_address, cstr
+from frappe.utils import (cint, split_emails, get_request_site_address, cstr,
+	get_files_path, get_backups_path, encode)
 from frappe.utils.backups import new_backup
-from frappe.utils import get_files_path, get_backups_path
 
 import os
 from frappe import _
@@ -197,7 +197,8 @@ def upload_from_folder(path, dropbox_folder, dropbox_client, did_not_upload, err
 		found = False
 		filepath = os.path.join(path, filename)
 		for file_metadata in response["contents"]:
- 			if os.path.basename(filepath) == os.path.basename(file_metadata["path"]) and os.stat(filepath).st_size == int(file_metadata["bytes"]):
+ 			if (os.path.basename(filepath) == os.path.basename(file_metadata["path"])
+				and os.stat(encode(filepath)).st_size == int(file_metadata["bytes"])):
 				found = True
 				break
 
@@ -224,7 +225,7 @@ def get_dropbox_session():
 
 def upload_file_to_dropbox(filename, folder, dropbox_client):
 	from dropbox import rest
-	size = os.stat(filename).st_size
+	size = os.stat(encode(filename)).st_size
 
 	with open(filename, 'r') as f:
 		# if max packet size reached, use chunked uploader
@@ -241,10 +242,11 @@ def upload_file_to_dropbox(filename, folder, dropbox_client):
 					# if "[401] u'Access token not found.'",
 					# it means that the user needs to again allow dropbox backup from the UI
 					# so re-raise
-
-					if (e.startswith("[401]")
+					exc_message = cstr(e)
+					if (exc_message.startswith("[401]")
 						and dropbox_client.connection_reset_count < 10
-						and e != "[401] u'Access token not found.'"):
+						and exc_message != "[401] u'Access token not found.'"):
+
 
 						# session expired, so get a new connection!
 						# [401] u"The given OAuth 2 access token doesn't exist or has expired."

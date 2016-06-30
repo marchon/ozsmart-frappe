@@ -67,7 +67,7 @@ frappe.ui.form.Control = Class.extend({
 		// hide if no value
 		if (this.doctype && status==="Read"
 			&& is_null(frappe.model.get_value(this.doctype, this.docname, this.df.fieldname))
-			&& !in_list(["HTML"], this.df.fieldtype)) {
+			&& !in_list(["HTML", "Image"], this.df.fieldtype)) {
 				if(explain) console.log("By Hide Read-only, null fields: None");
 				status = "None";
 		}
@@ -366,6 +366,7 @@ frappe.ui.form.ControlData = frappe.ui.form.ControlInput.extend({
 	make_input: function() {
 		this.$input = $("<"+ this.html_element +">")
 			.attr("type", this.input_type)
+			.attr("autocomplete", "off")
 			.addClass("input-with-feedback form-control")
 			.prependTo(this.input_area)
 
@@ -1032,7 +1033,7 @@ frappe.ui.form.ControlLink = frappe.ui.form.ControlData.extend({
 	make_input: function() {
 		var me = this;
 		$('<div class="link-field ui-front" style="position: relative;">\
-			<input type="text" class="input-with-feedback form-control">\
+			<input type="text" class="input-with-feedback form-control" autocomplete="off">\
 			<span class="link-btn">\
 				<a class="btn-open no-decoration" title="' + __("Open Link") + '">\
 					<i class="icon-link"></i></a>\
@@ -1300,6 +1301,14 @@ frappe.ui.form.ControlDynamicLink = frappe.ui.form.ControlLink.extend({
 	get_options: function() {
 		if(this.df.get_options) {
 			return this.df.get_options();
+		}
+		if (this.docname==null && cur_dialog) {
+			//for dialog box
+			return cur_dialog.get_value(this.df.options)
+		}
+		if (cur_frm==null && cur_list){
+			//for list page
+			return cur_list.wrapper.find("input[data-fieldname*="+this.df.options+"]").val()
 		}
 		var options = frappe.model.get_value(this.df.parent, this.docname, this.df.options);
 		// if(!options) {

@@ -7,7 +7,7 @@ var redis = require("redis");
 var request = require('superagent');
 
 var conf = get_conf();
-var subscriber = redis.createClient(conf.redis_async_broker_port);
+var subscriber = redis.createClient(conf.redis_socketio || conf.redis_async_broker_port);
 
 // serve socketio
 http.listen(conf.socketio_port, function(){
@@ -53,12 +53,17 @@ io.on('connection', function(socket){
 		});
 
 	socket.on('task_subscribe', function(task_id) {
-		var room = 'task:' + task_id;
+		var room = get_task_room(socket, task_id);
 		socket.join(room);
 	});
 
+	socket.on('task_unsubscribe', function(task_id) {
+		var room = get_task_room(socket, task_id);
+		socket.leave(room);
+	});
+
 	socket.on('progress_subscribe', function(task_id) {
-		var room = 'task_progress:' + task_id;
+		var room = get_task_room(socket, task_id);
 		socket.join(room);
 		send_existing_lines(task_id, socket);
 	});
@@ -134,14 +139,15 @@ subscriber.on("message", function(channel, message) {
 subscriber.subscribe("events");
 
 function send_existing_lines(task_id, socket) {
+	var room = get_task_room(socket, task_id);
 	subscriber.hgetall('task_log:' + task_id, function(err, lines) {
-		socket.emit('task_progress', {
+		io.to(room).emit('task_progress', {
 			"task_id": task_id,
 			"message": {
 				"lines": lines
 			}
-		})
-	})
+		});
+	});
 }
 
 function get_doc_room(socket, doctype, docname) {
@@ -158,6 +164,10 @@ function get_user_room(socket, user) {
 
 function get_site_room(socket) {
 	return get_site_name(socket) + ':all';
+}
+
+function get_task_room(socket, task_id) {
+	return get_site_name(socket) + ':task_progress:' + task_id;
 }
 
 function get_site_name(socket) {
@@ -258,15 +268,20 @@ function get_conf() {
 		socketio_port: 3000
 	};
 
-	// get ports from bench/config.json
-	if(fs.existsSync('config.json')){
-		var bench_config = JSON.parse(fs.readFileSync('config.json'));
-		for (var key in conf) {
-			if (bench_config[key]) {
-				conf[key] = bench_config[key];
+	var read_config = function(path) {
+		if(fs.existsSync(path)){
+			var bench_config = JSON.parse(fs.readFileSync(path));
+			for (var key in bench_config) {
+				if (bench_config[key]) {
+					conf[key] = bench_config[key];
+				}
 			}
 		}
 	}
+
+	// get ports from bench/config.json
+	read_config('config.json');
+	read_config('sites/common_site_config.json');
 
 	// detect current site
 	if(fs.existsSync('sites/currentsite.txt')) {

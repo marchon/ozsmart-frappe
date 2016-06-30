@@ -34,6 +34,7 @@ def trigger_daily_alerts():
 	trigger_email_alerts(None, "daily")
 
 def trigger_email_alerts(doc, method=None):
+	from jinja2 import TemplateError
 	if frappe.flags.in_import or frappe.flags.in_patch:
 		# don't send email alerts while syncing or patching
 		return
@@ -50,7 +51,7 @@ def trigger_email_alerts(doc, method=None):
 				diff_days = -diff_days
 
 			for name in frappe.db.sql_list("""select name from `tab{0}` where
-				DATE({1}) = ADDDATE(DATE(%s), INTERVAL %s DAY)""".format(alert.document_type, alert.date_changed),
+				DATE(`{1}`) = ADDDATE(DATE(%s), INTERVAL %s DAY)""".format(alert.document_type, alert.date_changed),
 					(nowdate(), diff_days or 0)):
 
 				evaluate_alert(frappe.get_doc(alert.document_type, name),
@@ -71,7 +72,10 @@ def trigger_email_alerts(doc, method=None):
 
 		for alert in frappe.db.sql_list("""select name from `tabEmail Alert`
 			where document_type=%s and event=%s and enabled=1""", (doc.doctype, eevent)):
-			evaluate_alert(doc, alert, eevent)
+			try:
+				evaluate_alert(doc, alert, eevent)
+			except TemplateError:
+				frappe.throw(_("Error while evaluating Email Alert {0}. Please fix your template.").format(alert))
 
 def evaluate_alert(doc, alert, event):
 	if isinstance(alert, basestring):

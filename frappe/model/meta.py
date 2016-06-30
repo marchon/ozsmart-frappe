@@ -61,7 +61,9 @@ class Meta(Document):
 		return self.get("fields", {"fieldtype": "Link", "options":["!=", "[Select]"]})
 
 	def get_dynamic_link_fields(self):
-		return self.get("fields", {"fieldtype": "Dynamic Link"})
+		if not hasattr(self, '_dynamic_link_fields'):
+			self._dynamic_link_fields = self.get("fields", {"fieldtype": "Dynamic Link"})
+		return self._dynamic_link_fields
 
 	def get_select_fields(self):
 		return self.get("fields", {"fieldtype": "Select", "options":["not in",
@@ -178,27 +180,43 @@ class Meta(Document):
 				docfield.set(ps.property, ps.value)
 
 	def sort_fields(self):
-		"""sort on basis of previous_field"""
-		if self.get("_idx"):
+		"""sort on basis of insert_after"""
+		custom_fields = sorted(self.get_custom_fields(), key=lambda df: df.idx)
+
+		if custom_fields:
 			newlist = []
-			pending = self.get("fields")
 
-			for fieldname in json.loads(self.get("_idx")):
-				d = self.get("fields", {"fieldname": fieldname}, limit=1)
-				if d:
-					newlist.append(d[0])
-					pending.remove(d[0])
+			# if custom field is at top
+			# insert_after is false
+			for c in list(custom_fields):
+				if not c.insert_after:
+					newlist.append(c)
+					custom_fields.pop(custom_fields.index(c))
 
-			if pending:
-				newlist += pending
+			# standard fields
+			newlist += [df for df in self.get('fields') if not df.get('is_custom_field')]
 
-			# renum
-			idx = 1
-			for d in newlist:
-				d.idx = idx
-				idx += 1
+			newlist_fieldnames = [df.fieldname for df in newlist]
+			for i in xrange(2):
+				for df in list(custom_fields):
+					if df.insert_after in newlist_fieldnames:
+						cf = custom_fields.pop(custom_fields.index(df))
+						idx = newlist_fieldnames.index(df.insert_after)
+						newlist.insert(idx + 1, cf)
+						newlist_fieldnames.insert(idx + 1, cf.fieldname)
 
-			self.set("fields", newlist)
+				if not custom_fields:
+					break
+
+			# worst case, add remaining custom fields to last
+			if custom_fields:
+				newlist += custom_fields
+
+			# renum idx
+			for i, f in enumerate(newlist):
+				f.idx = i + 1
+
+			self.fields = newlist
 
 	def get_fields_to_check_permissions(self, user_permission_doctypes):
 		fields = self.get("fields", {
@@ -262,21 +280,29 @@ def get_field_currency(df, doc=None):
 	if not getattr(frappe.local, "field_currency", None):
 		frappe.local.field_currency = frappe._dict()
 
-	if not frappe.local.field_currency.get((doc.doctype, doc.parent or doc.name), {}).get(df.fieldname):
+	if not (frappe.local.field_currency.get((doc.doctype, doc.name), {}).get(df.fieldname) or
+		(doc.parent and frappe.local.field_currency.get((doc.doctype, doc.parent), {}).get(df.fieldname))):
+
+		ref_docname = doc.parent or doc.name
+
 		if ":" in cstr(df.get("options")):
 			split_opts = df.get("options").split(":")
 			if len(split_opts)==3:
 				currency = frappe.db.get_value(split_opts[0], doc.get(split_opts[1]), split_opts[2])
 		else:
 			currency = doc.get(df.get("options"))
-			if not currency and doc.parent:
-				currency = frappe.db.get_value(doc.parenttype, doc.parent, df.get("options"))
+			if doc.parent:
+				if currency:
+					ref_docname = doc.name
+				else:
+					currency = frappe.db.get_value(doc.parenttype, doc.parent, df.get("options"))
 
 		if currency:
-			frappe.local.field_currency.setdefault((doc.doctype, doc.parent or doc.name), frappe._dict())\
+			frappe.local.field_currency.setdefault((doc.doctype, ref_docname), frappe._dict())\
 				.setdefault(df.fieldname, currency)
 
-	return frappe.local.field_currency.get((doc.doctype, doc.parent or doc.name), {}).get(df.fieldname)
+	return frappe.local.field_currency.get((doc.doctype, doc.name), {}).get(df.fieldname) or \
+		(doc.parent and frappe.local.field_currency.get((doc.doctype, doc.parent), {}).get(df.fieldname))
 
 def get_field_precision(df, doc=None, currency=None):
 	"""get precision based on DocField options and fieldvalue in doc"""
@@ -342,8 +368,8 @@ def trim_tables():
 def clear_cache(doctype=None):
 	cache = frappe.cache()
 
-	cache.delete_value("is_table")
-	cache.delete_value("doctype_modules")
+	for key in ('is_table', 'doctype_modules'):
+		cache.delete_value(key)
 
 	groups = ["meta", "form_meta", "table_columns", "last_modified", "linked_doctypes"]
 
